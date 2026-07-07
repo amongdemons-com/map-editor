@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Map Editor | Among Demons</title>
+    <meta name="description" content="Local Among Demons world map editor.">
+    <link rel="icon" href="../../public/app/images/amongdemons.ico" type="image/x-icon">
+    <link href="./map-editor.css" rel="stylesheet">
+  </head>
+  <body class="map-editor-page">
+    <main class="map-editor-shell" aria-label="World map editor">
+      <header class="map-editor-topbar">
+        <div class="map-editor-brand" aria-label="Among Demons">
+          <img src="../../public/app/images/amongdemons_logo_250x250.png" alt="" width="34" height="34">
+          <span>Among Demons</span>
+        </div>
+        <div class="map-editor-title">
+          <h1>Map Editor</h1>
+          <span id="mapEditorStatus" role="status" aria-live="polite">Import map.json or load a saved draft.</span>
+        </div>
+        <div class="map-editor-actions" aria-label="File actions">
+          <button class="editor-button" id="loadDraftButton" type="button">Load Draft</button>
+          <button class="editor-button" id="clearDraftButton" type="button">Clear Draft</button>
+          <button class="editor-button" id="importMapButton" type="button">Import</button>
+          <button class="editor-button" id="exportMapButton" type="button">Export</button>
+          <button class="editor-button is-primary" id="saveMapButton" type="button">Save Draft</button>
+        </div>
+      </header>
+
+      <section class="map-editor-layout">
+        <aside class="map-editor-sidebar" aria-label="Tools">
+          <section class="editor-panel">
+            <h2>Tools</h2>
+            <div class="tool-grid" role="toolbar" aria-label="Drawing tools">
+              <button class="tool-button is-active" type="button" data-tool="move" aria-pressed="true">Move</button>
+              <button class="tool-button" type="button" data-tool="road" aria-pressed="false">Road</button>
+              <button class="tool-button" type="button" data-tool="block" aria-pressed="false">Block</button>
+              <button class="tool-button" type="button" data-tool="shrine" aria-pressed="false">Shrine</button>
+              <button class="tool-button" type="button" data-tool="portal" aria-pressed="false">Teleport</button>
+              <button class="tool-button" type="button" data-tool="erase" aria-pressed="false">Erase</button>
+            </div>
+            <label class="editor-field">
+              <span>Block type</span>
+              <select id="blockTypeSelect">
+                <option value="basalt">Basalt</option>
+                <option value="bone-spur">Bone spur</option>
+                <option value="chasm">Chasm</option>
+                <option value="ruin">Ruin</option>
+              </select>
+            </label>
+            <div class="editor-toggle-list">
+              <label><input type="checkbox" id="showGridToggle" checked> Grid</label>
+              <label><input type="checkbox" id="showEncountersToggle" checked> Demon spots</label>
+            </div>
+          </section>
+
+          <section class="editor-panel">
+            <h2>Edit</h2>
+            <div class="edit-actions">
+              <button class="editor-button" id="undoButton" type="button" disabled>Undo</button>
+              <button class="editor-button" id="redoButton" type="button" disabled>Redo</button>
+              <button class="editor-button" id="centerMapButton" type="button">Center</button>
+            </div>
+            <dl class="map-stats" id="mapStats">
+              <div><dt>Roads</dt><dd>-</dd></div>
+              <div><dt>Blocks</dt><dd>-</dd></div>
+              <div><dt>Shrines</dt><dd>-</dd></div>
+              <div><dt>Teleports</dt><dd>-</dd></div>
+              <div><dt>Spots</dt><dd>-</dd></div>
+            </dl>
+          </section>
+        </aside>
+
+        <section class="map-stage" aria-label="Map canvas">
+          <canvas id="mapCanvas" aria-label="Editable world map"></canvas>
+          <div class="map-canvas-hud">
+            <span id="hoverReadout">Area -, -</span>
+            <span id="zoomReadout">100%</span>
+          </div>
+          <div class="map-canvas-help">
+            Wheel zoom. Drag empty map to pan. Select markers to move.
+          </div>
+        </section>
+
+        <aside class="map-editor-inspector" aria-label="Inspector">
+          <section class="editor-panel inspector-panel">
+            <h2>Selection</h2>
+            <div id="selectionEmpty" class="selection-empty">
+              Select a shrine, teleport, demon spot, road, block, or spawn point.
+            </div>
+            <form id="selectionForm" class="selection-form d-none">
+              <div class="selection-kind" id="selectionKind">Selection</div>
+              <div class="coordinate-grid">
+                <label class="editor-field">
+                  <span>X</span>
+                  <input id="selectionX" type="number" step="1">
+                </label>
+                <label class="editor-field">
+                  <span>Y</span>
+                  <input id="selectionY" type="number" step="1">
+                </label>
+              </div>
+
+              <div id="eventFields" class="selection-fields d-none">
+                <label class="editor-field">
+                  <span>Event type</span>
+                  <select id="eventTypeSelect">
+                    <option value="forsaken_shrine">Forsaken Shrine</option>
+                    <option value="darkness-portal">Darkness Portal</option>
+                  </select>
+                </label>
+                <label class="editor-field">
+                  <span>Title</span>
+                  <input id="eventTitle" type="text">
+                </label>
+                <label class="editor-field">
+                  <span>Description</span>
+                  <textarea id="eventDescription" rows="4"></textarea>
+                </label>
+                <label class="editor-field" id="portalCostField">
+                  <span>Souls per step</span>
+                  <input id="portalCost" type="number" min="0" step="1">
+                </label>
+              </div>
+
+              <div id="blockFields" class="selection-fields d-none">
+                <label class="editor-field">
+                  <span>Block type</span>
+                  <select id="selectionBlockType">
+                    <option value="basalt">Basalt</option>
+                    <option value="bone-spur">Bone spur</option>
+                    <option value="chasm">Chasm</option>
+                    <option value="ruin">Ruin</option>
+                  </select>
+                </label>
+              </div>
+
+              <div id="encounterFields" class="selection-fields d-none">
+                <dl class="selection-meta">
+                  <div><dt>ID</dt><dd id="encounterId">-</dd></div>
+                  <div><dt>Threat</dt><dd id="encounterDifficulty">-</dd></div>
+                  <div><dt>Demon</dt><dd id="encounterDemon">-</dd></div>
+                </dl>
+              </div>
+
+              <div class="selection-actions">
+                <button class="editor-button is-primary" id="applySelectionButton" type="submit">Apply</button>
+                <button class="editor-button is-danger" id="deleteSelectionButton" type="button">Delete</button>
+              </div>
+            </form>
+          </section>
+        </aside>
+      </section>
+      <input id="mapImportFile" type="file" accept="application/json" hidden>
+    </main>
+
+    <script src="./map-editor.js"></script>
+  </body>
+</html>
