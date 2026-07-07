@@ -152,6 +152,17 @@
                   <div><dt>Threat</dt><dd id="encounterDifficulty">-</dd></div>
                   <div><dt>Demon</dt><dd id="encounterDemon">-</dd></div>
                 </dl>
+                <label class="editor-field">
+                  <span>Threat</span>
+                  <input id="encounterDifficultyInput" type="number" min="1" max="10" step="1">
+                </label>
+                <div class="encounter-team-editor">
+                  <div class="encounter-team-head">
+                    <span>Team</span>
+                    <button class="editor-button" id="addEncounterMemberButton" type="button">Add Demon</button>
+                  </div>
+                  <div class="encounter-team-list" id="encounterTeamList"></div>
+                </div>
               </div>
 
               <div class="selection-actions">

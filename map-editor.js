@@ -28,6 +28,9 @@ const DEFAULT_PORTAL = {
   description: 'Spend 2 Souls per map step to teleport here instantly.'
 };
 const TOOL_KEYS = ['move', 'road', 'block', 'shrine', 'portal', 'erase'];
+const ENCOUNTER_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
+const ENCOUNTER_ROLES = ['melee', 'ranged', 'poisoner', 'aoe', 'juggernaut', 'counter_tank', 'striker', 'healer', 'assassin'];
+const ENCOUNTER_POSITIONS = ['front', 'back'];
 const BLOCK_COLORS = {
   basalt: '#4d4541',
   'bone-spur': '#6c6253',
@@ -177,6 +180,9 @@ function cacheElements() {
     'encounterId',
     'encounterDifficulty',
     'encounterDemon',
+    'encounterDifficultyInput',
+    'encounterTeamList',
+    'addEncounterMemberButton',
     'applySelectionButton',
     'deleteSelectionButton',
     'mapImportFile'
@@ -224,6 +230,9 @@ function bindControls() {
   dom.selectionForm?.addEventListener('submit', onApplySelection);
   dom.deleteSelectionButton?.addEventListener('click', deleteSelection);
   dom.eventTypeSelect?.addEventListener('change', syncEventTypeFields);
+  dom.addEncounterMemberButton?.addEventListener('click', addEncounterMemberEditorRow);
+  dom.encounterTeamList?.addEventListener('click', onEncounterTeamListClick);
+  dom.encounterTeamList?.addEventListener('change', onEncounterTeamListChange);
 
   dom.mapCanvas?.addEventListener('pointerdown', onCanvasPointerDown);
   dom.mapCanvas?.addEventListener('pointermove', onCanvasPointerMove);
@@ -800,9 +809,15 @@ function applySelectionChanges(tile) {
       return false;
     }
 
+    const encounterEdits = readEncounterEditor();
+    if (!encounterEdits) return false;
+
     removeBlockAt(tile);
     item.x = tile.x;
     item.y = tile.y;
+    item.difficulty = encounterEdits.difficulty;
+    item.team = encounterEdits.team;
+    item.keyDemon = encounterEdits.keyDemon;
     return true;
   }
 
@@ -960,12 +975,309 @@ function renderInspector() {
     dom.encounterId.textContent = item.id || '-';
     dom.encounterDifficulty.textContent = item.difficulty ?? '-';
     dom.encounterDemon.textContent = item.keyDemon?.species || item.team?.[0]?.species || '-';
+    dom.encounterDifficultyInput.value = clamp(Math.floor(Number(item.difficulty) || 1), 1, 10);
+    renderEncounterTeamEditor(item);
   }
 }
 
 function syncEventTypeFields() {
   const isPortal = dom.eventTypeSelect?.value === 'darkness-portal';
   dom.portalCostField?.classList.toggle('d-none', !isPortal);
+}
+
+function renderEncounterTeamEditor(encounter) {
+  if (!dom.encounterTeamList) return;
+
+  const team = normalizeArray(encounter.team);
+  const keyIndex = getEncounterKeyMemberIndex(encounter, team);
+  dom.encounterTeamList.innerHTML = team.map((member, index) => renderEncounterMemberEditor(member, index, {
+    checked: index === keyIndex,
+    open: false
+  })).join('');
+}
+
+function renderEncounterMemberEditor(member, index, options = {}) {
+  const normalized = normalizeEncounterMemberDraft(member, index);
+  const label = normalized.species || `Demon ${index + 1}`;
+  const summaryMeta = [
+    `Type ${normalized.typeId}`,
+    formatOptionLabel(normalized.rarity),
+    formatOptionLabel(normalized.position)
+  ].join(' / ');
+
+  return `
+    <details class="encounter-member-card" data-encounter-member data-original-index="${index}" ${options.open ? 'open' : ''}>
+      <summary class="encounter-member-summary">
+        <span class="encounter-member-summary-title">
+          <span>Demon ${index + 1}</span>
+          <strong>${escapeHtml(label)}</strong>
+        </span>
+        <span class="encounter-member-summary-meta">${escapeHtml(summaryMeta)}${options.checked ? ' / Key' : ''}</span>
+      </summary>
+      <div class="encounter-member-body">
+        <div class="encounter-member-head">
+          <label class="encounter-member-key">
+            <input type="radio" name="encounterKeyDemon" data-field="key" ${options.checked ? 'checked' : ''}>
+            <span>Key</span>
+          </label>
+          <button class="editor-button is-danger" type="button" data-remove-encounter-member>Remove</button>
+        </div>
+        <div class="encounter-member-grid" aria-label="${escapeAttribute(label)}">
+          <label class="editor-field is-wide">
+            <span>Instance ID</span>
+            <input type="text" data-field="instanceId" value="${escapeAttribute(normalized.instanceId)}">
+          </label>
+          <label class="editor-field">
+            <span>Type ID</span>
+            <input type="number" min="1" max="${TYPE_COUNT}" step="1" data-field="typeId" value="${normalized.typeId}">
+          </label>
+          <label class="editor-field">
+            <span>Rarity</span>
+            <select data-field="rarity">${renderOptions(ENCOUNTER_RARITIES, normalized.rarity)}</select>
+          </label>
+          <label class="editor-field is-wide">
+            <span>Species</span>
+            <input type="text" data-field="species" value="${escapeAttribute(normalized.species)}">
+          </label>
+          <label class="editor-field">
+            <span>Role</span>
+            <select data-field="role">${renderOptions(ENCOUNTER_ROLES, normalized.role)}</select>
+          </label>
+          <label class="editor-field">
+            <span>Position</span>
+            <select data-field="position">${renderOptions(ENCOUNTER_POSITIONS, normalized.position)}</select>
+          </label>
+          <label class="editor-field is-wide">
+            <span>Image URL</span>
+            <input type="text" data-field="imageUrl" value="${escapeAttribute(normalized.imageUrl)}">
+          </label>
+        </div>
+        <label class="encounter-member-flags">
+          <input type="checkbox" data-field="elite" ${normalized.elite ? 'checked' : ''}>
+          <span>Elite</span>
+        </label>
+      </div>
+    </details>
+  `;
+}
+
+function renderOptions(values, selectedValue) {
+  const selected = String(selectedValue || '');
+  const options = values.includes(selected) || !selected ? values : [...values, selected];
+  return options.map((value) => (
+    `<option value="${escapeAttribute(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(formatOptionLabel(value))}</option>`
+  )).join('');
+}
+
+function formatOptionLabel(value) {
+  return String(value || '')
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function addEncounterMemberEditorRow() {
+  if (!dom.encounterTeamList) return;
+
+  const rows = getEncounterEditorRows();
+  const encounter = getSelectedItem();
+  const nextIndex = rows.length;
+  const member = createDefaultEncounterMember(encounter, nextIndex);
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = renderEncounterMemberEditor(member, nextIndex, {
+    checked: rows.length === 0,
+    open: true
+  });
+  const row = wrapper.firstElementChild;
+  if (!row) return;
+  dom.encounterTeamList.appendChild(row);
+}
+
+function onEncounterTeamListClick(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  const removeButton = target?.closest('[data-remove-encounter-member]');
+  if (!removeButton) return;
+
+  event.preventDefault();
+  const row = removeButton.closest('[data-encounter-member]');
+  row?.remove();
+  ensureEncounterKeySelection();
+}
+
+function onEncounterTeamListChange(event) {
+  const target = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement
+    ? event.target
+    : null;
+  if (!target || !target.closest('[data-encounter-member]')) return;
+
+  if (target.dataset.field === 'typeId' || target.dataset.field === 'rarity') {
+    updateEncounterMemberImageSuggestion(target.closest('[data-encounter-member]'));
+  }
+}
+
+function ensureEncounterKeySelection() {
+  const rows = getEncounterEditorRows();
+  if (!rows.length || rows.some((row) => row.querySelector('[data-field="key"]')?.checked)) return;
+  const firstKey = rows[0].querySelector('[data-field="key"]');
+  if (firstKey) firstKey.checked = true;
+}
+
+function updateEncounterMemberImageSuggestion(row) {
+  if (!row) return;
+  const imageInput = row.querySelector('[data-field="imageUrl"]');
+  if (!(imageInput instanceof HTMLInputElement)) return;
+
+  const current = imageInput.value.trim();
+  const generatedPattern = /^\/app\/images\/demons\/\d+\.png$/;
+  if (current && !generatedPattern.test(current)) return;
+
+  const typeId = Math.floor(Number(getEncounterRowFieldValue(row, 'typeId')) || 1);
+  const rarity = String(getEncounterRowFieldValue(row, 'rarity') || 'common');
+  imageInput.value = getDefaultDemonImageUrl(typeId, rarity);
+}
+
+function readEncounterEditor() {
+  const difficulty = clamp(Math.floor(Number(dom.encounterDifficultyInput?.value) || 1), 1, 10);
+  const rows = getEncounterEditorRows();
+  if (!rows.length) {
+    setStatus('A demon spot needs at least one demon in its team.', 'error');
+    return null;
+  }
+
+  const encounter = getSelectedItem();
+  const team = [];
+  let keyIndex = -1;
+
+  for (const [index, row] of rows.entries()) {
+    const member = readEncounterMemberRow(row, index, encounter);
+    if (!member) return null;
+    if (row.querySelector('[data-field="key"]')?.checked) keyIndex = index;
+    team.push(member);
+  }
+
+  const keyMember = team[keyIndex >= 0 ? keyIndex : 0];
+  return {
+    difficulty,
+    team,
+    keyDemon: {
+      typeId: keyMember.typeId,
+      species: keyMember.species,
+      rarity: keyMember.rarity,
+      imageUrl: keyMember.imageUrl
+    }
+  };
+}
+
+function readEncounterMemberRow(row, index, encounter) {
+  const originalIndex = Number(row.dataset.originalIndex);
+  const original = Number.isInteger(originalIndex) && originalIndex >= 0
+    ? normalizeArray(encounter?.team)[originalIndex] || {}
+    : {};
+  const typeId = Math.floor(Number(getEncounterRowFieldValue(row, 'typeId')) || 0);
+
+  if (!Number.isInteger(typeId) || typeId < 1 || typeId > TYPE_COUNT) {
+    setStatus(`Demon ${index + 1} needs a type ID between 1 and ${TYPE_COUNT}.`, 'error');
+    return null;
+  }
+
+  const rarity = normalizeChoice(getEncounterRowFieldValue(row, 'rarity'), ENCOUNTER_RARITIES, 'common');
+  const species = String(getEncounterRowFieldValue(row, 'species') || '').trim() || `Demon ${typeId}`;
+  const role = normalizeRole(getEncounterRowFieldValue(row, 'role'));
+  const position = normalizeChoice(getEncounterRowFieldValue(row, 'position'), ENCOUNTER_POSITIONS, 'front');
+  const imageUrl = String(getEncounterRowFieldValue(row, 'imageUrl') || '').trim() || getDefaultDemonImageUrl(typeId, rarity);
+  const instanceId = String(getEncounterRowFieldValue(row, 'instanceId') || '').trim()
+    || `${encounter?.id || 'encounter'}-m${index + 1}`;
+  const elite = Boolean(row.querySelector('[data-field="elite"]')?.checked);
+
+  const member = {
+    ...original,
+    instanceId,
+    typeId,
+    species,
+    role,
+    rarity,
+    position,
+    imageUrl
+  };
+
+  if (elite) member.elite = true;
+  else delete member.elite;
+
+  return member;
+}
+
+function getEncounterEditorRows() {
+  return Array.from(dom.encounterTeamList?.querySelectorAll('[data-encounter-member]') || []);
+}
+
+function getEncounterRowFieldValue(row, field) {
+  const input = row.querySelector(`[data-field="${field}"]`);
+  if (!input) return '';
+  if (input instanceof HTMLInputElement && input.type === 'checkbox') return input.checked;
+  return input.value;
+}
+
+function normalizeChoice(value, values, fallback) {
+  const normalized = String(value || '').trim();
+  return values.includes(normalized) ? normalized : fallback;
+}
+
+function normalizeRole(value) {
+  return String(value || '').trim() || 'melee';
+}
+
+function normalizeEncounterMemberDraft(member, index) {
+  const typeId = clamp(Math.floor(Number(member?.typeId) || 1), 1, TYPE_COUNT);
+  const rarity = normalizeChoice(member?.rarity, ENCOUNTER_RARITIES, 'common');
+  return {
+    instanceId: String(member?.instanceId || ''),
+    typeId,
+    species: String(member?.species || `Demon ${typeId}`),
+    role: normalizeRole(member?.role),
+    rarity,
+    position: normalizeChoice(member?.position, ENCOUNTER_POSITIONS, 'front'),
+    imageUrl: String(member?.imageUrl || getDefaultDemonImageUrl(typeId, rarity)),
+    elite: Boolean(member?.elite)
+  };
+}
+
+function createDefaultEncounterMember(encounter, index) {
+  const base = encounter?.keyDemon || normalizeArray(encounter?.team)[0] || {};
+  const typeId = clamp(Math.floor(Number(base.typeId) || 1), 1, TYPE_COUNT);
+  const rarity = normalizeChoice(base.rarity, ENCOUNTER_RARITIES, 'common');
+  return {
+    instanceId: `${encounter?.id || 'encounter'}-m${index + 1}`,
+    typeId,
+    species: base.species || `Demon ${typeId}`,
+    role: 'melee',
+    rarity,
+    position: index === 0 ? 'front' : 'back',
+    imageUrl: base.imageUrl || getDefaultDemonImageUrl(typeId, rarity),
+    elite: index === 0
+  };
+}
+
+function getEncounterKeyMemberIndex(encounter, team) {
+  const key = encounter?.keyDemon;
+  if (!team.length) return -1;
+  if (!key) return 0;
+
+  const exactIndex = team.findIndex((member) => (
+    Number(member?.typeId) === Number(key.typeId)
+    && String(member?.rarity || '') === String(key.rarity || '')
+    && String(member?.species || '') === String(key.species || '')
+  ));
+  if (exactIndex >= 0) return exactIndex;
+
+  const eliteIndex = team.findIndex((member) => member?.elite);
+  return eliteIndex >= 0 ? eliteIndex : 0;
+}
+
+function getDefaultDemonImageUrl(typeId, rarity) {
+  const rarityIndex = Math.max(0, ENCOUNTER_RARITIES.indexOf(rarity));
+  const assetId = (clamp(Math.floor(Number(typeId) || 1), 1, TYPE_COUNT) - 1) * ENCOUNTER_RARITIES.length + rarityIndex + 1;
+  return `/app/images/demons/${assetId}.png`;
 }
 
 function getSelectionLabel(selection, item) {
@@ -2290,6 +2602,19 @@ function ensureSelectValue(select, value) {
   option.value = value;
   option.textContent = value;
   select.appendChild(option);
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value);
 }
 
 function mapToText(map) {
