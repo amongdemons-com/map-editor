@@ -3,6 +3,11 @@ const MAP_DRAFT_META_KEY = 'amongdemons.mapEditor.mapDraftMeta.v1';
 const MIN_TILE_SIZE = 4;
 const MAX_TILE_SIZE = 38;
 const DEFAULT_BOUNDS = { min: -50, max: 50 };
+const TYPE_COUNT = 11;
+const ZONE_START_RADIUS = 24;
+const ZONE_ROTATION = 0.045;
+const ZONE_TYPE_REMAP = { 4: 5, 5: 4 };
+const DEMON_MAP_ASSET_BASE = '../../public/app/images/demons/map/';
 const EMPTY_MAP = {
   bounds: { ...DEFAULT_BOUNDS },
   spawn: { x: 0, y: 0 },
@@ -44,6 +49,59 @@ const COLORS = {
   encounter: '#d9685f',
   spawn: '#7bd7df'
 };
+const GAME_BOARD_COLORS = {
+  background: '#040a0d',
+  selection: '#d7b765',
+  shrineGlow: '#e8c76a',
+  shrineSoul: '#8de7ff',
+  portalGlow: '#80638a',
+  pathGlow: '#58c7f0',
+  gridLine: '#39423a'
+};
+const GAME_THEME_COLORS = {
+  default: '#FAC51C',
+  1: '#D1D5D8',
+  2: '#171D24',
+  3: '#167246',
+  4: '#E25041',
+  5: '#C8CED2',
+  6: '#C084FC',
+  7: '#FFB23F',
+  8: '#6E8F45',
+  9: '#B8BDC2',
+  10: '#8DE7FF',
+  11: '#52B7FF'
+};
+const GAME_DEFAULT_ZONE_PALETTE = {
+  ground: ['#131812', '#141913', '#121711'],
+  patch: '#20291f',
+  moss: '#28381f',
+  crack: '#0a0d09',
+  road: ['#261f14', '#2d2618'],
+  roadEdge: '#0d0a06',
+  roadSheen: '#4a3d22',
+  stone: ['#302c25', '#39342b', '#28241e'],
+  stoneDark: '#18130d',
+  stoneLight: '#4a4335',
+  prop: '#3b3529',
+  fog: '#070806',
+  accent: '#e4685e'
+};
+const GAME_ZONE_COLOR_VARIANTS = {
+  5: '#D8D0C4',
+  9: '#A9B7C8'
+};
+const GAME_ZONE_PALETTES = Array.from({ length: TYPE_COUNT + 1 }, (item, typeId) => (
+  typeId === 0 ? null : createGameZonePalette(typeId)
+));
+const RARITY_COLORS = {
+  common: '#D1D5D8',
+  uncommon: '#41A85F',
+  rare: '#2C82C9',
+  epic: '#9365B8',
+  legendary: '#FAC51C',
+  mythic: '#E25041'
+};
 
 const state = {
   map: null,
@@ -64,8 +122,10 @@ const state = {
   interactionChanged: false,
   history: [],
   future: [],
+  previewMode: 'game',
   showGrid: true,
   showEncounters: true,
+  imageCache: new Map(),
   spacePressed: false
 };
 
@@ -90,6 +150,7 @@ function cacheElements() {
     'importMapButton',
     'exportMapButton',
     'saveMapButton',
+    'previewModeSelect',
     'blockTypeSelect',
     'showGridToggle',
     'showEncountersToggle',
@@ -134,6 +195,10 @@ function bindControls() {
   });
 
   dom.blockTypeSelect?.addEventListener('change', () => setTool('block'));
+  dom.previewModeSelect?.addEventListener('change', () => {
+    state.previewMode = dom.previewModeSelect.value === 'schematic' ? 'schematic' : 'game';
+    render();
+  });
   dom.showGridToggle?.addEventListener('change', () => {
     state.showGrid = Boolean(dom.showGridToggle.checked);
     render();
@@ -1060,12 +1125,25 @@ function render() {
   const mapSize = count * state.tileSize;
 
   ctx.save();
-  ctx.fillStyle = COLORS.mapFill;
-  ctx.fillRect(mapX, mapY, mapSize, mapSize);
   ctx.beginPath();
   ctx.rect(mapX, mapY, mapSize, mapSize);
   ctx.clip();
 
+  if (state.previewMode === 'game') {
+    renderGamePreview(ctx, bounds, count, mapX, mapY, mapSize);
+  } else {
+    renderSchematicPreview(ctx, bounds, count, mapX, mapY, mapSize);
+  }
+
+  ctx.restore();
+  ctx.strokeStyle = state.previewMode === 'game' ? 'rgba(232, 199, 106, 0.38)' : COLORS.mapBorder;
+  ctx.lineWidth = state.previewMode === 'game' ? 1.5 : 2;
+  ctx.strokeRect(mapX, mapY, mapSize, mapSize);
+}
+
+function renderSchematicPreview(ctx, bounds, count, mapX, mapY, mapSize) {
+  ctx.fillStyle = COLORS.mapFill;
+  ctx.fillRect(mapX, mapY, mapSize, mapSize);
   if (state.showGrid) drawGrid(ctx, bounds, count);
   drawAxis(ctx, bounds);
   drawRoads(ctx);
@@ -1075,11 +1153,21 @@ function render() {
   drawSpawn(ctx);
   drawHover(ctx);
   drawSelection(ctx);
+}
 
-  ctx.restore();
-  ctx.strokeStyle = COLORS.mapBorder;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(mapX, mapY, mapSize, mapSize);
+function renderGamePreview(ctx, bounds, count, mapX, mapY, mapSize) {
+  ctx.fillStyle = GAME_BOARD_COLORS.background;
+  ctx.fillRect(mapX, mapY, mapSize, mapSize);
+  drawGameTerrain(ctx);
+  if (state.showGrid) drawGameGrid(ctx, bounds, count);
+  drawGameRoads(ctx);
+  drawGameBlocks(ctx);
+  drawGameEventAuras(ctx);
+  drawGameEvents(ctx);
+  if (state.showEncounters) drawGameEncounters(ctx);
+  drawGameSpawn(ctx);
+  drawGameHover(ctx);
+  drawGameSelection(ctx);
 }
 
 function drawGrid(ctx, bounds, count) {
@@ -1228,6 +1316,716 @@ function drawMarker(ctx, tile, color, shape) {
   ctx.restore();
 }
 
+function drawGameTerrain(ctx) {
+  const sets = getMapTileSets();
+
+  forVisibleTiles((x, y) => {
+    drawGameGroundTile(ctx, x, y, sets);
+  }, 1);
+
+  drawGameMacroShading(ctx);
+}
+
+function drawGameGroundTile(ctx, x, y, sets) {
+  const tile = { x, y };
+  const rect = tileRect(tile);
+  const size = state.tileSize;
+  const zone = zoneTypeIdForTile(x, y);
+  const palette = zonePaletteForTile(x, y);
+  const variant = Math.floor(hashTile(x, y, 0) * palette.ground.length) % palette.ground.length;
+
+  ctx.fillStyle = palette.ground[variant];
+  ctx.fillRect(rect.x - 0.2, rect.y - 0.2, size + 0.4, size + 0.4);
+
+  if (size >= 5) {
+    drawEllipse(ctx, rect.x + size * hashTile(x, y, 11), rect.y + size * hashTile(x, y, 12), size * 0.34, size * 0.24, palette.patch, 0.08);
+  }
+
+  if (size >= 8) {
+    ctx.save();
+    ctx.strokeStyle = palette.crack;
+    ctx.globalAlpha = 0.42;
+    ctx.lineWidth = Math.max(0.7, size * 0.045);
+    ctx.beginPath();
+    const vertical = hashTile(x, y, 13) < 0.5;
+    const start = vertical
+      ? { x: rect.x + size * hashTile(x, y, 14), y: rect.y - 1 }
+      : { x: rect.x - 1, y: rect.y + size * hashTile(x, y, 14) };
+    ctx.moveTo(start.x, start.y);
+    for (let step = 1; step <= 3; step += 1) {
+      const t = step / 3;
+      const jitter = (hashTile(x, y, 14 + step) - 0.5) * size * 0.32;
+      ctx.lineTo(
+        vertical ? start.x + jitter : rect.x + t * (size + 2),
+        vertical ? rect.y + t * (size + 2) : start.y + jitter
+      );
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (size >= 11 && !sets.roads.has(getTileKey(tile)) && !sets.blocks.has(getTileKey(tile)) && hashTile(x, y, 7) < 0.05) {
+    const cx = rect.x + size * (0.35 + hashTile(x, y, 8) * 0.3);
+    const cy = rect.y + size * (0.38 + hashTile(x, y, 9) * 0.25);
+    drawEllipse(ctx, cx + size * 0.02, cy + size * 0.03, size * 0.08, size * 0.04, '#000000', 0.18);
+    drawEllipse(ctx, cx, cy, size * 0.055, size * 0.045, palette.prop, 0.85);
+  }
+}
+
+function drawGameMacroShading(ctx) {
+  if (state.tileSize < 6) return;
+
+  const range = getVisibleTileRange(5);
+  const cell = 5;
+  const startX = Math.floor(range.minX / cell) * cell;
+  const startY = Math.floor(range.minY / cell) * cell;
+
+  for (let y = startY; y <= range.maxY; y += cell) {
+    for (let x = startX; x <= range.maxX; x += cell) {
+      const rect = tileRect({ x, y });
+      const cx = rect.x + hashTile(x, y, 21) * cell * state.tileSize;
+      const cy = rect.y + hashTile(x, y, 22) * cell * state.tileSize;
+      const radius = state.tileSize * (2 + hashTile(x, y, 23) * 2.4);
+      const dark = hashTile(x, y, 24) < 0.55;
+      drawEllipse(ctx, cx, cy, radius, radius * (0.7 + hashTile(x, y, 25) * 0.35), dark ? '#000000' : '#8fa08a', dark ? 0.045 : 0.025);
+    }
+  }
+}
+
+function drawGameGrid(ctx, bounds, count) {
+  if (state.tileSize < 7) return;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.strokeStyle = GAME_BOARD_COLORS.gridLine;
+  ctx.globalAlpha = 0.12;
+  ctx.lineWidth = 1;
+
+  for (let index = 0; index <= count; index += 1) {
+    const x = Math.round(state.offsetX + index * state.tileSize) + 0.5;
+    ctx.moveTo(x, state.offsetY);
+    ctx.lineTo(x, state.offsetY + count * state.tileSize);
+  }
+
+  for (let index = 0; index <= count; index += 1) {
+    const y = Math.round(state.offsetY + index * state.tileSize) + 0.5;
+    ctx.moveTo(state.offsetX, y);
+    ctx.lineTo(state.offsetX + count * state.tileSize, y);
+  }
+
+  ctx.stroke();
+
+  if (0 >= bounds.min && 0 <= bounds.max) {
+    const zero = 0 - bounds.min;
+    ctx.globalAlpha = 0.28;
+    ctx.strokeStyle = '#6fd6bd';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const x = state.offsetX + zero * state.tileSize + state.tileSize / 2;
+    const y = state.offsetY + zero * state.tileSize + state.tileSize / 2;
+    ctx.moveTo(x, state.offsetY);
+    ctx.lineTo(x, state.offsetY + count * state.tileSize);
+    ctx.moveTo(state.offsetX, y);
+    ctx.lineTo(state.offsetX + count * state.tileSize, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawGameRoads(ctx) {
+  const roadKeys = getMapTileSets().roads;
+
+  state.map.roads.forEach((tile) => {
+    if (isTileVisible(tile)) drawGameRoadTile(ctx, tile, roadKeys);
+  });
+}
+
+function drawGameRoadTile(ctx, tile, roadKeys) {
+  const rect = tileRect(tile);
+  const size = state.tileSize;
+  const palette = zonePaletteForTile(tile.x, tile.y);
+  const mask =
+    (roadKeys.has(getTileKey({ x: tile.x, y: tile.y - 1 })) ? 1 : 0) |
+    (roadKeys.has(getTileKey({ x: tile.x + 1, y: tile.y })) ? 2 : 0) |
+    (roadKeys.has(getTileKey({ x: tile.x, y: tile.y + 1 })) ? 4 : 0) |
+    (roadKeys.has(getTileKey({ x: tile.x - 1, y: tile.y })) ? 8 : 0);
+  const width = clamp(size * 0.42, Math.min(3, size), size * 0.62);
+  const inset = (size - width) / 2;
+  const half = size / 2;
+  const dirt = palette.road[Math.floor(hashTile(tile.x, tile.y, 6) * palette.road.length) % palette.road.length];
+  const segments = [[rect.x + inset, rect.y + inset, width, width]];
+
+  if (mask & 1) segments.push([rect.x + inset, rect.y, width, half]);
+  if (mask & 2) segments.push([rect.x + half, rect.y + inset, half, width]);
+  if (mask & 4) segments.push([rect.x + inset, rect.y + half, width, half]);
+  if (mask & 8) segments.push([rect.x, rect.y + inset, half, width]);
+
+  ctx.save();
+  ctx.fillStyle = palette.roadEdge;
+  ctx.globalAlpha = 0.55;
+  segments.forEach(([x, y, w, h]) => ctx.fillRect(x - size * 0.04, y - size * 0.04, w + size * 0.08, h + size * 0.08));
+
+  ctx.globalAlpha = 0.96;
+  ctx.fillStyle = dirt;
+  segments.forEach(([x, y, w, h]) => ctx.fillRect(x, y, w, h));
+
+  if (size >= 9) {
+    const center = tileCenterScreen(tile);
+    drawEllipse(ctx, center.x, center.y, size * 0.11, size * 0.1, palette.roadSheen, 0.16);
+    if (mask & 1) drawEllipse(ctx, center.x, center.y - size * 0.25, size * 0.09, size * 0.08, palette.roadSheen, 0.12);
+    if (mask & 2) drawEllipse(ctx, center.x + size * 0.25, center.y, size * 0.09, size * 0.08, palette.roadSheen, 0.12);
+    if (mask & 4) drawEllipse(ctx, center.x, center.y + size * 0.25, size * 0.09, size * 0.08, palette.roadSheen, 0.12);
+    if (mask & 8) drawEllipse(ctx, center.x - size * 0.25, center.y, size * 0.09, size * 0.08, palette.roadSheen, 0.12);
+  }
+
+  if (size >= 13) {
+    ctx.fillStyle = palette.stone[Math.floor(hashTile(tile.x, tile.y, 16) * palette.stone.length) % palette.stone.length];
+    for (let index = 0; index < 2; index += 1) {
+      const cx = rect.x + size * (0.32 + hashTile(tile.x, tile.y, 17 + index) * 0.36);
+      const cy = rect.y + size * (0.32 + hashTile(tile.x, tile.y, 19 + index) * 0.36);
+      drawEllipse(ctx, cx, cy, size * 0.045, size * 0.032, ctx.fillStyle, 0.58);
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawGameBlocks(ctx) {
+  state.map.blocks.forEach((tile) => {
+    if (isTileVisible(tile)) drawGameBlock(ctx, tile);
+  });
+}
+
+function drawGameBlock(ctx, tile) {
+  const zone = zoneTypeIdForTile(tile.x, tile.y);
+  const type = tile.type || 'basalt';
+
+  if (zone === 3) {
+    drawGamePuddleBlock(ctx, tile, {
+      border: '#06110a',
+      body: '#17331d',
+      deep: '#0b1a0e',
+      glow: '#4e8a48'
+    });
+    return;
+  }
+
+  if (zone === 4) {
+    drawGamePuddleBlock(ctx, tile, {
+      border: '#150705',
+      body: '#3a1710',
+      deep: '#1d0b07',
+      glow: '#e25041'
+    });
+    return;
+  }
+
+  if (zone === 8) {
+    drawGameLeafBlock(ctx, tile);
+    return;
+  }
+
+  if (type === 'chasm') drawGameChasmBlock(ctx, tile);
+  else if (type === 'bone-spur') drawGameBoneBlock(ctx, tile);
+  else if (type === 'ruin') drawGameRuinBlock(ctx, tile);
+  else drawGameStoneBlock(ctx, tile);
+}
+
+function drawGameStoneBlock(ctx, tile) {
+  const rect = tileRect(tile);
+  const size = state.tileSize;
+  const palette = zonePaletteForTile(tile.x, tile.y);
+
+  drawEllipse(ctx, rect.x + size * 0.54, rect.y + size * 0.62, size * 0.32, size * 0.2, '#000000', 0.34);
+  for (let index = 0; index < 3; index += 1) {
+    const cx = rect.x + size * (0.33 + hashTile(tile.x, tile.y, 31 + index) * 0.36);
+    const cy = rect.y + size * (0.35 + hashTile(tile.x, tile.y, 36 + index) * 0.3);
+    const radius = size * (0.15 + hashTile(tile.x, tile.y, 41 + index) * 0.13);
+    drawEllipse(ctx, cx + radius * 0.12, cy + radius * 0.2, radius * 1.1, radius * 0.78, '#000000', 0.22);
+    drawEllipse(ctx, cx, cy, radius, radius * 0.78, palette.stone[index % palette.stone.length], 0.95);
+    drawEllipse(ctx, cx - radius * 0.2, cy - radius * 0.2, radius * 0.36, radius * 0.18, palette.stoneLight, 0.26);
+  }
+}
+
+function drawGameBoneBlock(ctx, tile) {
+  const rect = tileRect(tile);
+  const size = state.tileSize;
+  drawEllipse(ctx, rect.x + size * 0.52, rect.y + size * 0.68, size * 0.34, size * 0.13, '#000000', 0.35);
+  ctx.save();
+  ctx.strokeStyle = '#c8c0a8';
+  ctx.lineWidth = Math.max(1, size * 0.1);
+  ctx.lineCap = 'round';
+  for (let index = 0; index < 3; index += 1) {
+    const baseX = rect.x + size * (0.3 + index * 0.2);
+    const baseY = rect.y + size * 0.7;
+    const tipX = baseX + (hashTile(tile.x, tile.y, 51 + index) - 0.5) * size * 0.16;
+    const tipY = rect.y + size * (0.2 + hashTile(tile.x, tile.y, 54 + index) * 0.2);
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    drawCircle(ctx, tipX, tipY, Math.max(1.2, size * 0.055), '#efe8cf', 0.85);
+  }
+  ctx.restore();
+}
+
+function drawGameChasmBlock(ctx, tile) {
+  const rect = tileRect(tile);
+  const size = state.tileSize;
+  const center = tileCenterScreen(tile);
+  drawEllipse(ctx, center.x, center.y + size * 0.08, size * 0.38, size * 0.3, '#020303', 0.92);
+  drawEllipse(ctx, center.x - size * 0.05, center.y - size * 0.02, size * 0.28, size * 0.2, '#0d1015', 0.92);
+  drawEllipse(ctx, rect.x + size * 0.32, rect.y + size * 0.3, size * 0.08, size * 0.03, '#39423a', 0.2);
+}
+
+function drawGameRuinBlock(ctx, tile) {
+  const rect = tileRect(tile);
+  const size = state.tileSize;
+  const palette = zonePaletteForTile(tile.x, tile.y);
+  drawEllipse(ctx, rect.x + size * 0.52, rect.y + size * 0.7, size * 0.34, size * 0.13, '#000000', 0.32);
+  ctx.save();
+  ctx.fillStyle = palette.stoneDark;
+  const brickHeight = Math.max(1.5, size * 0.16);
+  for (let index = 0; index < 3; index += 1) {
+    const x = rect.x + size * (0.2 + index * 0.2);
+    const y = rect.y + size * (0.35 + (index % 2) * 0.16);
+    ctx.fillRect(x, y, size * 0.25, brickHeight);
+    ctx.strokeStyle = '#070909';
+    ctx.lineWidth = Math.max(0.5, size * 0.025);
+    ctx.strokeRect(x, y, size * 0.25, brickHeight);
+  }
+  ctx.restore();
+}
+
+function drawGamePuddleBlock(ctx, tile, colors) {
+  const center = tileCenterScreen(tile);
+  const size = state.tileSize;
+  const radius = size * 0.42;
+
+  ctx.save();
+  ctx.beginPath();
+  traceScreenBlob(ctx, center.x, center.y, radius, tile.x, tile.y);
+  ctx.fillStyle = colors.border;
+  ctx.globalAlpha = 0.95;
+  ctx.fill();
+
+  ctx.beginPath();
+  traceScreenBlob(ctx, center.x, center.y, radius * 0.86, tile.x + 3, tile.y - 7);
+  ctx.fillStyle = colors.body;
+  ctx.globalAlpha = 0.9;
+  ctx.fill();
+
+  if (size >= 9) {
+    drawEllipse(ctx, center.x - size * 0.08, center.y, size * 0.18, size * 0.08, colors.deep, 0.45);
+    drawCircle(ctx, center.x + size * 0.16, center.y - size * 0.1, Math.max(1, size * 0.04), colors.glow, 0.52);
+    drawCircle(ctx, center.x - size * 0.18, center.y + size * 0.12, Math.max(0.8, size * 0.03), colors.glow, 0.38);
+  }
+
+  ctx.restore();
+}
+
+function drawGameLeafBlock(ctx, tile) {
+  const center = tileCenterScreen(tile);
+  const size = state.tileSize;
+
+  drawEllipse(ctx, center.x + size * 0.06, center.y + size * 0.08, size * 0.38, size * 0.28, '#000000', 0.28);
+  for (let index = 0; index < 9; index += 1) {
+    const angle = (index / 9) * Math.PI * 2 + hashTile(tile.x, tile.y, 60 + index) * 0.55;
+    const length = size * (0.32 + hashTile(tile.x, tile.y, 70 + index) * 0.22);
+    const width = size * (0.08 + hashTile(tile.x, tile.y, 80 + index) * 0.04);
+    const ox = center.x + Math.cos(angle) * size * 0.08;
+    const oy = center.y + Math.sin(angle) * size * 0.08;
+    drawLeaf(ctx, ox, oy, angle, length, width, index % 3 === 0 ? '#35501f' : index % 2 === 0 ? '#1f3214' : '#14200d', 0.86);
+  }
+}
+
+function drawGameEventAuras(ctx) {
+  state.map.events.forEach((event) => {
+    if (!isTileVisible(event)) return;
+    const center = tileCenterScreen(event);
+    if (event.type === 'darkness-portal') {
+      drawCircle(ctx, center.x, center.y, getGameMarkerRadius(1.45), GAME_BOARD_COLORS.portalGlow, 0.16);
+      drawCircle(ctx, center.x, center.y, getGameMarkerRadius(0.9), GAME_BOARD_COLORS.portalGlow, 0.12);
+    } else if (event.type === 'forsaken_shrine') {
+      drawCircle(ctx, center.x, center.y - state.tileSize * 0.05, getGameMarkerRadius(1.25), GAME_BOARD_COLORS.shrineSoul, 0.1);
+      drawCircle(ctx, center.x, center.y - state.tileSize * 0.45, getGameMarkerRadius(0.42), GAME_BOARD_COLORS.shrineSoul, 0.16);
+    }
+  });
+}
+
+function drawGameEvents(ctx) {
+  state.map.events.forEach((event) => {
+    if (!isTileVisible(event)) return;
+    if (event.type === 'darkness-portal') drawGamePortalMarker(ctx, event);
+    else if (event.type === 'forsaken_shrine') drawGameShrineMarker(ctx, event);
+  });
+}
+
+function drawGamePortalMarker(ctx, event) {
+  const center = tileCenterScreen(event);
+  const radius = getGameMarkerRadius(0.76);
+
+  drawEllipse(ctx, center.x, center.y + radius * 0.9, radius * 1.15, radius * 0.38, '#000000', 0.38);
+  drawCircle(ctx, center.x, center.y, radius, '#0d0812', 0.95);
+
+  ctx.save();
+  ctx.strokeStyle = GAME_BOARD_COLORS.portalGlow;
+  ctx.lineWidth = Math.max(1.2, radius * 0.14);
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.globalAlpha = 0.62;
+  for (let index = 0; index < 3; index += 1) {
+    const start = (index / 3) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius * (0.64 - index * 0.1), start, start + Math.PI * 0.9);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  drawCircle(ctx, center.x, center.y, Math.max(1.5, radius * 0.16), '#d9c8ea', 0.9);
+}
+
+function drawGameShrineMarker(ctx, event) {
+  const center = tileCenterScreen(event);
+  const scale = getGameMarkerScale();
+  const soul = GAME_BOARD_COLORS.shrineSoul;
+
+  ctx.save();
+  ctx.translate(center.x, center.y);
+  ctx.scale(scale, scale);
+
+  drawLocalEllipse(ctx, 1, 16, 17, 6, '#000000', 0.4);
+  drawLocalPolygon(ctx, [-14, 13, 14, 13, 11, 18, -11, 18], '#161a19', '#070909', 1.4, 0.96);
+  drawLocalPolygon(ctx, [-8, 13, -9, -10, -4, -17, 3, -19, 8, -12, 9, 5, 7, 13], '#1d2323', '#0a0d0d', 1.6, 0.97);
+  drawLocalPolygon(ctx, [-7.5, 10, -8.5, -9, -4, -16, -2, -16, -3.5, 10], '#394547', null, 0, 0.4);
+
+  ctx.strokeStyle = '#0a0d0d';
+  ctx.globalAlpha = 0.7;
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(3, -18);
+  ctx.lineTo(1, -8);
+  ctx.lineTo(3.5, 2);
+  ctx.stroke();
+
+  drawLocalCircle(ctx, 0, -3, 8, soul, 0.12);
+  ctx.strokeStyle = soul;
+  ctx.globalAlpha = 0.72;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, -9);
+  ctx.lineTo(0, 3);
+  ctx.moveTo(-4, -6.5);
+  ctx.lineTo(4, -6.5);
+  ctx.moveTo(-3.5, 0);
+  ctx.lineTo(3.5, 0);
+  ctx.stroke();
+
+  drawLocalCircle(ctx, 0, -21, 5.5, soul, 0.18);
+  drawLocalEllipse(ctx, 0, -21, 2.4, 3.4, soul, 0.72);
+  drawLocalEllipse(ctx, 0, -21.8, 1.1, 1.8, '#eafcff', 0.9);
+  ctx.restore();
+}
+
+function drawGameEncounters(ctx) {
+  state.map.encounters.forEach((encounter) => {
+    if (isTileVisible(encounter)) drawGameEncounterMarker(ctx, encounter);
+  });
+}
+
+function drawGameEncounterMarker(ctx, encounter) {
+  const center = tileCenterScreen(encounter);
+  const radius = getGameMarkerRadius(0.86);
+  const ringColor = rarityColor(encounter.keyDemon?.rarity);
+  const image = getEncounterImage(encounter);
+
+  ctx.save();
+  drawEllipse(ctx, center.x, center.y + radius * 1.05, radius * 0.95, radius * 0.22, '#000000', 0.35);
+  drawCircle(ctx, center.x, center.y, radius * 1.2, ringColor, state.selected?.kind === 'encounter' && getSelectedItem() === encounter ? 0.2 : 0.09);
+  drawCircle(ctx, center.x, center.y, radius * 1.06, '#080c0e', 0.92);
+
+  ctx.strokeStyle = '#0a0705';
+  ctx.lineWidth = Math.max(1, radius * 0.12);
+  ctx.globalAlpha = 0.7;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius * 1.1, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = ringColor;
+  ctx.globalAlpha = 0.78;
+  ctx.lineWidth = Math.max(1.1, radius * 0.1);
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius * 1.02, 0, Math.PI * 2);
+  ctx.stroke();
+
+  if (image) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius * 0.95, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(image, center.x - radius, center.y - radius, radius * 2, radius * 2);
+    ctx.restore();
+  } else {
+    drawCircle(ctx, center.x, center.y, radius * 0.92, ringColor, 0.24);
+  }
+
+  ctx.restore();
+}
+
+function drawGameSpawn(ctx) {
+  if (!state.map?.spawn || !isTileVisible(state.map.spawn)) return;
+  const center = tileCenterScreen(state.map.spawn);
+  const radius = getGameMarkerRadius(0.84);
+
+  drawCircle(ctx, center.x, center.y, radius * 1.28, GAME_BOARD_COLORS.selection, 0.1);
+  drawEllipse(ctx, center.x, center.y + radius * 1.05, radius, radius * 0.28, '#000000', 0.36);
+  drawCircle(ctx, center.x, center.y, radius, '#071214', 0.95);
+
+  ctx.save();
+  ctx.strokeStyle = GAME_BOARD_COLORS.selection;
+  ctx.lineWidth = Math.max(1.4, radius * 0.12);
+  ctx.globalAlpha = 0.96;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius * 1.02, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = '#6fd6bd';
+  ctx.beginPath();
+  ctx.moveTo(center.x, center.y - radius * 0.62);
+  ctx.lineTo(center.x + radius * 0.58, center.y + radius * 0.36);
+  ctx.lineTo(center.x, center.y + radius * 0.12);
+  ctx.lineTo(center.x - radius * 0.58, center.y + radius * 0.36);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawGameHover(ctx) {
+  if (!state.hoverTile) return;
+  const center = tileCenterScreen(state.hoverTile);
+  const radius = clamp(state.tileSize * 0.42, 3, 21);
+  ctx.save();
+  ctx.strokeStyle = GAME_BOARD_COLORS.pathGlow;
+  ctx.fillStyle = GAME_BOARD_COLORS.pathGlow;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = Math.max(1.2, state.tileSize * 0.07);
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 0.08;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawGameSelection(ctx) {
+  const item = getSelectedItem();
+  if (!item) return;
+
+  const center = tileCenterScreen(item);
+  const radius = clamp(state.tileSize * 0.58, 4, 25);
+  ctx.save();
+  ctx.strokeStyle = GAME_BOARD_COLORS.selection;
+  ctx.lineWidth = Math.max(1.6, Math.min(4, state.tileSize * 0.18));
+  ctx.globalAlpha = 0.96;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 0.16;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius * 1.18, 0, Math.PI * 2);
+  ctx.fillStyle = GAME_BOARD_COLORS.selection;
+  ctx.fill();
+  ctx.restore();
+}
+
+function getEncounterImage(encounter) {
+  const src = getEncounterMapImageSrc(encounter);
+  if (!src) return null;
+
+  const cached = state.imageCache.get(src);
+  if (cached?.status === 'loaded') return cached.image;
+  if (cached) return null;
+
+  const image = new Image();
+  const entry = { status: 'loading', image };
+  state.imageCache.set(src, entry);
+  image.onload = () => {
+    entry.status = 'loaded';
+    render();
+  };
+  image.onerror = () => {
+    entry.status = 'error';
+  };
+  image.src = src;
+  return null;
+}
+
+function getEncounterMapImageSrc(encounter) {
+  const rawUrl = encounter?.keyDemon?.imageUrl || encounter?.team?.[0]?.imageUrl || '';
+  const match = String(rawUrl).match(/\/demons\/(?:map\/)?(\d+)\.(?:png|webp|jpe?g)$/i);
+  if (match) return `${DEMON_MAP_ASSET_BASE}${match[1]}.webp`;
+  if (String(rawUrl).startsWith('/app/')) return `../../public${rawUrl}`;
+  return rawUrl || '';
+}
+
+function getMapTileSets() {
+  return {
+    roads: new Set(normalizeArray(state.map?.roads).map(getTileKey)),
+    blocks: new Set(normalizeArray(state.map?.blocks).map(getTileKey))
+  };
+}
+
+function getVisibleTileRange(padding = 0) {
+  const bounds = getBounds();
+  const pad = Math.max(0, Math.floor(padding));
+  const minX = Math.floor((0 - state.offsetX) / state.tileSize) + bounds.min - pad;
+  const maxX = Math.ceil((state.canvasWidth - state.offsetX) / state.tileSize) + bounds.min + pad;
+  const minY = Math.floor((0 - state.offsetY) / state.tileSize) + bounds.min - pad;
+  const maxY = Math.ceil((state.canvasHeight - state.offsetY) / state.tileSize) + bounds.min + pad;
+
+  return {
+    minX: clamp(minX, bounds.min, bounds.max),
+    maxX: clamp(maxX, bounds.min, bounds.max),
+    minY: clamp(minY, bounds.min, bounds.max),
+    maxY: clamp(maxY, bounds.min, bounds.max)
+  };
+}
+
+function forVisibleTiles(callback, padding = 0) {
+  const range = getVisibleTileRange(padding);
+  for (let y = range.minY; y <= range.maxY; y += 1) {
+    for (let x = range.minX; x <= range.maxX; x += 1) {
+      callback(x, y);
+    }
+  }
+}
+
+function tileCenterScreen(tile) {
+  const rect = tileRect(tile);
+  return {
+    x: rect.x + state.tileSize / 2,
+    y: rect.y + state.tileSize / 2
+  };
+}
+
+function getGameMarkerRadius(multiplier = 1) {
+  return clamp(state.tileSize * 0.72 * multiplier, 3.8 * multiplier, 22 * multiplier);
+}
+
+function getGameMarkerScale() {
+  return clamp(state.tileSize / 42, 0.24, 0.82);
+}
+
+function drawCircle(ctx, x, y, radius, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, Math.max(0, radius), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawEllipse(ctx, x, y, radiusX, radiusY, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(x, y, Math.max(0, radiusX), Math.max(0, radiusY), 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLocalCircle(ctx, x, y, radius, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLocalEllipse(ctx, x, y, radiusX, radiusY, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLocalPolygon(ctx, points, fill, stroke = null, strokeWidth = 1, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.beginPath();
+  ctx.moveTo(points[0], points[1]);
+  for (let index = 2; index < points.length; index += 2) {
+    ctx.lineTo(points[index], points[index + 1]);
+  }
+  ctx.closePath();
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = strokeWidth;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function traceScreenBlob(ctx, cx, cy, radius, seedX, seedY) {
+  const lobes = 14;
+  const points = [];
+  for (let index = 0; index < lobes; index += 1) {
+    const angle = (index / lobes) * Math.PI * 2;
+    const n1 = Math.sin(angle * 2 + hashTile(seedX, seedY, 91) * Math.PI * 2) * 0.1;
+    const n2 = Math.sin(angle * 5 + hashTile(seedX, seedY, 92) * Math.PI * 2) * 0.08;
+    const r = radius * (1 + n1 + n2);
+    points.push({ x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r * 0.88 });
+  }
+
+  const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const start = midpoint(points[points.length - 1], points[0]);
+  ctx.moveTo(start.x, start.y);
+  points.forEach((point, index) => {
+    const next = points[(index + 1) % points.length];
+    const mid = midpoint(point, next);
+    ctx.quadraticCurveTo(point.x, point.y, mid.x, mid.y);
+  });
+  ctx.closePath();
+}
+
+function drawLeaf(ctx, ox, oy, angle, length, width, color, alpha) {
+  const ca = Math.cos(angle);
+  const sa = Math.sin(angle);
+  const tipX = ox + ca * length;
+  const tipY = oy + sa * length;
+  const midX = ox + ca * length * 0.5;
+  const midY = oy + sa * length * 0.5;
+  const px = -sa * width;
+  const py = ca * width;
+
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(ox, oy);
+  ctx.quadraticCurveTo(midX + px, midY + py, tipX, tipY);
+  ctx.quadraticCurveTo(midX - px, midY - py, ox, oy);
+  ctx.fill();
+  ctx.restore();
+}
+
 function getCanvasPoint(event) {
   const rect = dom.mapCanvas.getBoundingClientRect();
   return {
@@ -1308,8 +2106,10 @@ function normalizeLoadedMap(map) {
   }
 
   const bounds = normalizeBounds(map.bounds || DEFAULT_BOUNDS);
+  const blockSource = Array.isArray(map.blocks) ? map.blocks : map.blockedTiles;
+  const { blockedTiles, ...mapBase } = map;
   const normalized = {
-    ...map,
+    ...mapBase,
     bounds,
     spawn: normalizePoint(map.spawn || { x: 0, y: 0 }, bounds),
     roads: normalizeArray(map.roads).map((tile) => normalizePoint(tile, bounds)),
@@ -1318,7 +2118,7 @@ function normalizeLoadedMap(map) {
       ...normalizePoint(event, bounds),
       type: String(event?.type || DEFAULT_SHRINE.type)
     })),
-    blocks: normalizeArray(map.blocks).map((block) => ({
+    blocks: normalizeArray(blockSource).map((block) => ({
       ...block,
       ...normalizePoint(block, bounds),
       type: String(block?.type || 'basalt')
@@ -1384,6 +2184,103 @@ function isIntegerTile(tile) {
 function positionsEqual(a, b) {
   if (!a || !b) return false;
   return Number(a.x) === Number(b.x) && Number(a.y) === Number(b.y);
+}
+
+function getTileKey(tile) {
+  return `${Number(tile?.x) || 0},${Number(tile?.y) || 0}`;
+}
+
+function hashTile(x, y, salt) {
+  let hash = Math.imul((x | 0) + 0x9e37, 374761393) ^
+    Math.imul((y | 0) + 0x85eb, 668265263) ^
+    Math.imul((salt | 0) + 1, 2246822519);
+  hash = Math.imul(hash ^ (hash >>> 13), 1274126177);
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 4294967296;
+}
+
+function createGameZonePalette(typeId) {
+  const accent = zoneAccentForType(typeId);
+  return {
+    ground: GAME_DEFAULT_ZONE_PALETTE.ground.map((color) => mixHex(color, accent, 0.08)),
+    patch: mixHex(GAME_DEFAULT_ZONE_PALETTE.patch, accent, 0.14),
+    moss: mixHex(GAME_DEFAULT_ZONE_PALETTE.moss, accent, 0.1),
+    crack: mixHex(GAME_DEFAULT_ZONE_PALETTE.crack, accent, 0.04),
+    road: GAME_DEFAULT_ZONE_PALETTE.road.map((color, index) => mixHex(color, accent, index === 0 ? 0.06 : 0.08)),
+    roadEdge: mixHex(GAME_DEFAULT_ZONE_PALETTE.roadEdge, accent, 0.03),
+    roadSheen: mixHex(GAME_DEFAULT_ZONE_PALETTE.roadSheen, accent, 0.13),
+    stone: GAME_DEFAULT_ZONE_PALETTE.stone.map((color, index) => mixHex(color, accent, index === 1 ? 0.1 : 0.08)),
+    stoneDark: mixHex(GAME_DEFAULT_ZONE_PALETTE.stoneDark, accent, 0.04),
+    stoneLight: mixHex(GAME_DEFAULT_ZONE_PALETTE.stoneLight, accent, 0.14),
+    prop: mixHex(GAME_DEFAULT_ZONE_PALETTE.prop, accent, 0.28),
+    fog: mixHex(GAME_DEFAULT_ZONE_PALETTE.fog, accent, 0.03),
+    accent
+  };
+}
+
+function zoneAccentForType(typeId) {
+  return GAME_ZONE_COLOR_VARIANTS[typeId] || GAME_THEME_COLORS[typeId] || GAME_THEME_COLORS.default;
+}
+
+function neutralZoneRadius(theta) {
+  return ZONE_START_RADIUS +
+    Math.sin(theta * 3 + 1.7) * 3.4 +
+    Math.sin(theta * 5 + 0.6) * 2.1 +
+    Math.sin(theta * 9 + 4.1) * 1.2;
+}
+
+function zoneBoundaryJitter(radius, theta) {
+  return (
+    Math.sin(radius * 0.31 + theta * 2) * 0.5 +
+    Math.sin(radius * 0.17 - theta * 3 + 2.3) * 0.35 +
+    Math.sin(radius * 0.53 + theta * 5 + 4.6) * 0.15
+  ) * 0.02;
+}
+
+function zoneTypeIdForTile(x, y) {
+  const radius = Math.hypot(x, y);
+  const angle = Math.atan2(y, x);
+  if (radius < neutralZoneRadius(angle)) return 0;
+  const normalized = (angle + Math.PI) / (2 * Math.PI);
+  const jittered = normalized + ZONE_ROTATION + zoneBoundaryJitter(radius, angle);
+  const sector = Math.floor((((jittered % 1) + 1) % 1) * TYPE_COUNT) % TYPE_COUNT;
+  return remapZoneTypeId(sector + 1);
+}
+
+function remapZoneTypeId(typeId) {
+  return ZONE_TYPE_REMAP[typeId] || typeId;
+}
+
+function zonePaletteForTile(x, y) {
+  return GAME_ZONE_PALETTES[zoneTypeIdForTile(x, y)] || GAME_DEFAULT_ZONE_PALETTE;
+}
+
+function rarityColor(rarity) {
+  return RARITY_COLORS[String(rarity || '').toLowerCase()] || RARITY_COLORS.common;
+}
+
+function mixHex(from, to, amount) {
+  const a = hexToRgb(from);
+  const b = hexToRgb(to);
+  const ratio = clamp(amount, 0, 1);
+  return rgbToHex(a.map((channel, index) => Math.round(channel + (b[index] - channel) * ratio)));
+}
+
+function hexToRgb(value) {
+  const normalized = String(value || '').replace(/^#/, '').trim();
+  const parsed = Number.parseInt(normalized.length === 3
+    ? normalized.split('').map((char) => char + char).join('')
+    : normalized, 16);
+  if (!Number.isFinite(parsed)) return [255, 255, 255];
+  return [
+    (parsed >> 16) & 255,
+    (parsed >> 8) & 255,
+    parsed & 255
+  ];
+}
+
+function rgbToHex(rgb) {
+  return `#${rgb.map((value) => clamp(Math.round(value), 0, 255).toString(16).padStart(2, '0')).join('')}`;
 }
 
 function ensureSelectValue(select, value) {

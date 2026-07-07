@@ -41,15 +41,24 @@
               <button class="tool-button" type="button" data-tool="portal" aria-pressed="false">Teleport</button>
               <button class="tool-button" type="button" data-tool="erase" aria-pressed="false">Erase</button>
             </div>
-            <label class="editor-field">
-              <span>Block type</span>
-              <select id="blockTypeSelect">
-                <option value="basalt">Basalt</option>
-                <option value="bone-spur">Bone spur</option>
-                <option value="chasm">Chasm</option>
-                <option value="ruin">Ruin</option>
-              </select>
-            </label>
+            <div class="tool-options">
+              <label class="editor-field">
+                <span>Display</span>
+                <select id="previewModeSelect">
+                  <option value="game">Game preview</option>
+                  <option value="schematic">Editor schematic</option>
+                </select>
+              </label>
+              <label class="editor-field">
+                <span>Block type</span>
+                <select id="blockTypeSelect">
+                  <option value="basalt">Basalt</option>
+                  <option value="bone-spur">Bone spur</option>
+                  <option value="chasm">Chasm</option>
+                  <option value="ruin">Ruin</option>
+                </select>
+              </label>
+            </div>
             <div class="editor-toggle-list">
               <label><input type="checkbox" id="showGridToggle" checked> Grid</label>
               <label><input type="checkbox" id="showEncountersToggle" checked> Demon spots</label>
