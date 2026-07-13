@@ -39,6 +39,7 @@
               <button class="tool-button" type="button" data-tool="block" aria-pressed="false">Block</button>
               <button class="tool-button" type="button" data-tool="shrine" aria-pressed="false">Shrine</button>
               <button class="tool-button" type="button" data-tool="portal" aria-pressed="false">Teleport</button>
+              <button class="tool-button" type="button" data-tool="sign" aria-pressed="false">Sign</button>
               <button class="tool-button" type="button" data-tool="erase" aria-pressed="false">Erase</button>
             </div>
             <div class="tool-options">
@@ -74,6 +75,7 @@
             <dl class="map-stats" id="mapStats">
               <div><dt>Roads</dt><dd>-</dd></div>
               <div><dt>Blocks</dt><dd>-</dd></div>
+              <div><dt>Signs</dt><dd>-</dd></div>
               <div><dt>Shrines</dt><dd>-</dd></div>
               <div><dt>Teleports</dt><dd>-</dd></div>
               <div><dt>Spots</dt><dd>-</dd></div>
@@ -96,7 +98,7 @@
           <section class="editor-panel inspector-panel">
             <h2>Selection</h2>
             <div id="selectionEmpty" class="selection-empty">
-              Select a shrine, teleport, demon spot, road, block, or spawn point.
+              Select a shrine, teleport, sign, demon spot, road, block, or spawn point.
             </div>
             <form id="selectionForm" class="selection-form d-none">
               <div class="selection-kind" id="selectionKind">Selection</div>
@@ -141,6 +143,13 @@
                     <option value="poison">Poison</option>
                     <option value="lava">Lava</option>
                   </select>
+                </label>
+              </div>
+
+              <div id="signFields" class="selection-fields d-none">
+                <label class="editor-field">
+                  <span>Message</span>
+                  <textarea id="signMessage" rows="6"></textarea>
                 </label>
               </div>
 

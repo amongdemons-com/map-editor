@@ -27,7 +27,11 @@ const DEFAULT_PORTAL = {
   summonCostPerDistance: 2,
   description: 'Spend 2 Souls per map step to teleport here instantly.'
 };
-const TOOL_KEYS = ['move', 'road', 'block', 'shrine', 'portal', 'erase'];
+const DEFAULT_SIGN = {
+  type: 'sign',
+  message: 'A weathered sign stands here.'
+};
+const TOOL_KEYS = ['move', 'road', 'block', 'shrine', 'portal', 'sign', 'erase'];
 const ENCOUNTER_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
 const ENCOUNTER_ROLES = ['melee', 'ranged', 'poisoner', 'aoe', 'juggernaut', 'counter_tank', 'striker', 'healer', 'assassin'];
 const ENCOUNTER_POSITIONS = ['front', 'back'];
@@ -50,6 +54,7 @@ const COLORS = {
   selection: '#f0c968',
   shrine: '#f0c968',
   portal: '#9a79c9',
+  sign: '#c89b5a',
   encounter: '#d9685f',
   spawn: '#7bd7df'
 };
@@ -177,6 +182,8 @@ function cacheElements() {
     'portalCost',
     'blockFields',
     'selectionBlockType',
+    'signFields',
+    'signMessage',
     'encounterFields',
     'encounterId',
     'encounterDifficulty',
@@ -433,7 +440,7 @@ function onCanvasPointerDown(event) {
 
   beginInteraction();
   beginPointer(event, 'paint', point, tile);
-  state.pointer.single = state.tool === 'shrine' || state.tool === 'portal';
+  state.pointer.single = state.tool === 'shrine' || state.tool === 'portal' || state.tool === 'sign';
   applyToolAt(tile);
 }
 
@@ -539,7 +546,7 @@ function onKeyDown(event) {
 
   if (isTyping) return;
 
-  if (/^[1-6]$/.test(event.key)) {
+  if (/^[1-7]$/.test(event.key)) {
     setTool(TOOL_KEYS[Number(event.key) - 1]);
   } else if (event.key === 'Delete' || event.key === 'Backspace') {
     deleteSelection();
@@ -598,6 +605,8 @@ function applyToolAt(tile) {
     changed = paintEvent(tile, DEFAULT_SHRINE);
   } else if (state.tool === 'portal') {
     changed = paintEvent(tile, DEFAULT_PORTAL);
+  } else if (state.tool === 'sign') {
+    changed = paintSign(tile);
   } else if (state.tool === 'erase') {
     changed = eraseAt(tile);
   }
@@ -612,7 +621,7 @@ function applyToolAt(tile) {
 
 function paintRoad(tile) {
   const roadIndex = findRoadIndexAt(tile);
-  const removedBlock = removeBlockAt(tile);
+  const removedBlock = removeTerrainBlockAt(tile);
   if (roadIndex >= 0) {
     state.selected = { kind: 'road', index: roadIndex };
     return removedBlock;
@@ -633,11 +642,40 @@ function paintBlock(tile) {
     state.selected = { kind: 'block', index };
     if (state.map.blocks[index].type === type) return removedRoad || removedEvent;
     state.map.blocks[index] = { ...state.map.blocks[index], type };
+    delete state.map.blocks[index].message;
     return true;
   }
 
   state.map.blocks.push({ ...tile, type });
   state.selected = { kind: 'block', index: state.map.blocks.length - 1 };
+  return true;
+}
+
+function paintSign(tile) {
+  const index = findBlockIndexAt(tile);
+  if (index >= 0 && isSign(state.map.blocks[index])) {
+    state.selected = { kind: 'sign', index };
+    renderInspector();
+    render();
+    return false;
+  }
+  if (findRoadIndexAt(tile) < 0) {
+    setStatus('Signs must be placed on road tiles.', 'error');
+    return false;
+  }
+  if (isWorldObjectAt(tile)) {
+    setStatus('Move the event, demon spot, or spawn before placing a sign on that tile.', 'error');
+    return false;
+  }
+
+  if (index >= 0) {
+    state.map.blocks[index] = { ...tile, ...DEFAULT_SIGN };
+    state.selected = { kind: 'sign', index };
+    return true;
+  }
+
+  state.map.blocks.push({ ...tile, ...DEFAULT_SIGN });
+  state.selected = { kind: 'sign', index: state.map.blocks.length - 1 };
   return true;
 }
 
@@ -711,8 +749,22 @@ function moveSelectedTo(tile) {
     state.map.spawn = { ...tile };
     changed = true;
   } else if (selection.kind === 'road') {
+    if (findSignIndexAt(item) >= 0) {
+      setStatus('Move or delete the sign before moving its road tile.', 'warning');
+      return false;
+    }
     if (findRoadIndexAt(tile, selection.index) >= 0) return false;
-    removeBlockAt(tile);
+    removeTerrainBlockAt(tile);
+    item.x = tile.x;
+    item.y = tile.y;
+    changed = true;
+  } else if (selection.kind === 'sign') {
+    if (findBlockIndexAt(tile, selection.index) >= 0) return false;
+    if (findRoadIndexAt(tile) < 0) {
+      setStatus('Signs must stay on road tiles.', 'error');
+      return false;
+    }
+    if (isWorldObjectAt(tile)) return false;
     item.x = tile.x;
     item.y = tile.y;
     changed = true;
@@ -792,13 +844,44 @@ function applySelectionChanges(tile) {
     return true;
   }
 
+  if (selection.kind === 'sign') {
+    if (findBlockIndexAt(tile, selection.index) >= 0) {
+      setStatus('Another block or sign is already on that tile.', 'error');
+      return false;
+    }
+    if (findRoadIndexAt(tile) < 0) {
+      setStatus('Signs must stay on road tiles.', 'error');
+      return false;
+    }
+    if (isWorldObjectAt(tile)) {
+      setStatus('Move the event, demon spot, or spawn before placing a sign on that tile.', 'error');
+      return false;
+    }
+
+    const message = dom.signMessage.value.trim();
+    if (!message) {
+      setStatus('Sign message cannot be empty.', 'error');
+      return false;
+    }
+
+    item.x = tile.x;
+    item.y = tile.y;
+    item.type = DEFAULT_SIGN.type;
+    item.message = message;
+    return true;
+  }
+
   if (selection.kind === 'road') {
+    if (findSignIndexAt(item) >= 0) {
+      setStatus('Move or delete the sign before moving its road tile.', 'warning');
+      return false;
+    }
     if (findRoadIndexAt(tile, selection.index) >= 0) {
       setStatus('Another road tile is already there.', 'error');
       return false;
     }
 
-    removeBlockAt(tile);
+    removeTerrainBlockAt(tile);
     item.x = tile.x;
     item.y = tile.y;
     return true;
@@ -838,11 +921,15 @@ function deleteSelection() {
     setStatus('Demon spots and spawn can be moved, not deleted from this editor.', 'warning');
     return;
   }
+  if (state.selected.kind === 'road' && findSignIndexAt(getSelectedItem()) >= 0) {
+    setStatus('Move or delete the sign before deleting its road tile.', 'warning');
+    return;
+  }
 
   performChange(() => {
     const selection = state.selected;
     if (selection.kind === 'event') state.map.events.splice(selection.index, 1);
-    else if (selection.kind === 'block') state.map.blocks.splice(selection.index, 1);
+    else if (selection.kind === 'block' || selection.kind === 'sign') state.map.blocks.splice(selection.index, 1);
     else if (selection.kind === 'road') state.map.roads.splice(selection.index, 1);
     else return false;
     state.selected = null;
@@ -913,7 +1000,9 @@ function getSelectableAt(tile) {
   if (positionsEqual(state.map.spawn, tile)) return { kind: 'spawn' };
 
   const blockIndex = findBlockIndexAt(tile);
-  if (blockIndex >= 0) return { kind: 'block', index: blockIndex };
+  if (blockIndex >= 0) {
+    return { kind: isSign(state.map.blocks[blockIndex]) ? 'sign' : 'block', index: blockIndex };
+  }
 
   const roadIndex = findRoadIndexAt(tile);
   if (roadIndex >= 0) return { kind: 'road', index: roadIndex };
@@ -927,7 +1016,7 @@ function getSelectedItem() {
 
   if (selection.kind === 'event') return state.map.events[selection.index] || null;
   if (selection.kind === 'encounter') return state.map.encounters[selection.index] || null;
-  if (selection.kind === 'block') return state.map.blocks[selection.index] || null;
+  if (selection.kind === 'block' || selection.kind === 'sign') return state.map.blocks[selection.index] || null;
   if (selection.kind === 'road') return state.map.roads[selection.index] || null;
   if (selection.kind === 'spawn') return state.map.spawn || null;
   return null;
@@ -953,6 +1042,7 @@ function renderInspector() {
 
   dom.eventFields.classList.toggle('d-none', selection.kind !== 'event');
   dom.blockFields.classList.toggle('d-none', selection.kind !== 'block');
+  dom.signFields.classList.toggle('d-none', selection.kind !== 'sign');
   dom.encounterFields.classList.toggle('d-none', selection.kind !== 'encounter');
   dom.deleteSelectionButton.disabled = selection.kind === 'encounter' || selection.kind === 'spawn';
 
@@ -969,6 +1059,10 @@ function renderInspector() {
 
   if (selection.kind === 'block') {
     dom.selectionBlockType.value = normalizeBlockType(item.type);
+  }
+
+  if (selection.kind === 'sign') {
+    dom.signMessage.value = String(item.message || '');
   }
 
   if (selection.kind === 'encounter') {
@@ -1285,6 +1379,7 @@ function getSelectionLabel(selection, item) {
     return item.type === 'darkness-portal' ? 'Teleport' : 'Shrine';
   }
   if (selection.kind === 'encounter') return 'Demon Spot';
+  if (selection.kind === 'sign') return 'Sign';
   if (selection.kind === 'block') return `Block: ${normalizeBlockType(item.type)}`;
   if (selection.kind === 'road') return 'Road';
   if (selection.kind === 'spawn') return 'Spawn';
@@ -1302,12 +1397,14 @@ function updateAll() {
 }
 
 function updateStats() {
-  if (!state.map || dom.statValues.length < 5) return;
+  if (!state.map || dom.statValues.length < 6) return;
   const shrines = state.map.events.filter((event) => event.type === 'forsaken_shrine').length;
   const portals = state.map.events.filter((event) => event.type === 'darkness-portal').length;
+  const signs = state.map.blocks.filter(isSign).length;
   const values = [
     state.map.roads.length,
-    state.map.blocks.length,
+    state.map.blocks.length - signs,
+    signs,
     shrines,
     portals,
     state.map.encounters.length
@@ -1460,6 +1557,7 @@ function renderSchematicPreview(ctx, bounds, count, mapX, mapY, mapSize) {
   drawAxis(ctx, bounds);
   drawRoads(ctx);
   drawBlocks(ctx);
+  drawSigns(ctx);
   drawEvents(ctx);
   if (state.showEncounters) drawEncounters(ctx);
   drawSpawn(ctx);
@@ -1474,6 +1572,7 @@ function renderGamePreview(ctx, bounds, count, mapX, mapY, mapSize) {
   if (state.showGrid) drawGameGrid(ctx, bounds, count);
   drawGameRoads(ctx);
   drawGameBlocks(ctx);
+  drawGameSigns(ctx);
   drawGameEventAuras(ctx);
   drawGameEvents(ctx);
   if (state.showEncounters) drawGameEncounters(ctx);
@@ -1529,8 +1628,15 @@ function drawRoads(ctx) {
 
 function drawBlocks(ctx) {
   state.map.blocks.forEach((tile) => {
+    if (isSign(tile)) return;
     ctx.fillStyle = BLOCK_COLORS[normalizeBlockType(tile.type)];
     drawTileInset(ctx, tile, Math.max(1, state.tileSize * 0.08));
+  });
+}
+
+function drawSigns(ctx) {
+  state.map.blocks.forEach((tile) => {
+    if (isSign(tile)) drawMarker(ctx, tile, COLORS.sign, 'sign');
   });
 }
 
@@ -1618,6 +1724,21 @@ function drawMarker(ctx, tile, color, shape) {
     ctx.lineTo(centerX + radius, centerY);
     ctx.moveTo(centerX, centerY - radius);
     ctx.lineTo(centerX, centerY + radius);
+    ctx.stroke();
+  } else if (shape === 'sign') {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(1.5, radius * 0.2);
+    ctx.strokeStyle = '#5c3b21';
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY + radius);
+    ctx.lineTo(centerX, centerY - radius * 0.15);
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#5c3b21';
+    ctx.beginPath();
+    ctx.rect(centerX - radius * 0.78, centerY - radius * 0.82, radius * 1.56, radius * 0.72);
+    ctx.fill();
     ctx.stroke();
   } else {
     ctx.beginPath();
@@ -1805,8 +1926,44 @@ function drawGameRoadTile(ctx, tile, roadKeys) {
 
 function drawGameBlocks(ctx) {
   state.map.blocks.forEach((tile) => {
+    if (isSign(tile)) return;
     if (isTileVisible(tile)) drawGameBlock(ctx, tile);
   });
+}
+
+function drawGameSigns(ctx) {
+  state.map.blocks.forEach((sign) => {
+    if (isSign(sign) && isTileVisible(sign)) drawGameSignMarker(ctx, sign);
+  });
+}
+
+function drawGameSignMarker(ctx, sign) {
+  const center = tileCenterScreen(sign);
+  const size = state.tileSize;
+  const scale = clamp(size / 16, 0.45, 1.35);
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  drawEllipse(ctx, center.x + 1.5 * scale, center.y + 5.5 * scale, 8 * scale, 3 * scale, '#000000', 0.35);
+  ctx.strokeStyle = '#3b2415';
+  ctx.lineWidth = Math.max(1.5, 3 * scale);
+  ctx.beginPath();
+  ctx.moveTo(center.x, center.y + 6 * scale);
+  ctx.lineTo(center.x, center.y - 5 * scale);
+  ctx.stroke();
+  ctx.fillStyle = '#9a6737';
+  ctx.strokeStyle = '#3b2415';
+  ctx.lineWidth = Math.max(1, 1.5 * scale);
+  ctx.beginPath();
+  ctx.moveTo(center.x - 8 * scale, center.y - 9 * scale);
+  ctx.lineTo(center.x + 8 * scale, center.y - 8 * scale);
+  ctx.lineTo(center.x + 7 * scale, center.y - 2 * scale);
+  ctx.lineTo(center.x - 8 * scale, center.y - 3 * scale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawGameBlock(ctx, tile) {
@@ -2288,6 +2445,18 @@ function findBlockIndexAt(tile, exceptIndex = -1) {
   return state.map.blocks.findIndex((block, index) => index !== exceptIndex && positionsEqual(block, tile));
 }
 
+function findTerrainBlockIndexAt(tile, exceptIndex = -1) {
+  return state.map.blocks.findIndex((block, index) => (
+    index !== exceptIndex && !isSign(block) && positionsEqual(block, tile)
+  ));
+}
+
+function findSignIndexAt(tile, exceptIndex = -1) {
+  return state.map.blocks.findIndex((block, index) => (
+    index !== exceptIndex && isSign(block) && positionsEqual(block, tile)
+  ));
+}
+
 function findEventIndexAt(tile, exceptIndex = -1) {
   return state.map.events.findIndex((event, index) => index !== exceptIndex && positionsEqual(event, tile));
 }
@@ -2305,6 +2474,13 @@ function removeRoadAt(tile) {
 
 function removeBlockAt(tile) {
   const index = findBlockIndexAt(tile);
+  if (index < 0) return false;
+  state.map.blocks.splice(index, 1);
+  return true;
+}
+
+function removeTerrainBlockAt(tile) {
+  const index = findTerrainBlockIndexAt(tile);
   if (index < 0) return false;
   state.map.blocks.splice(index, 1);
   return true;
@@ -2335,11 +2511,7 @@ function normalizeLoadedMap(map) {
       ...normalizePoint(event, bounds),
       type: String(event?.type || DEFAULT_SHRINE.type)
     })),
-    blocks: normalizeArray(blockSource).map((block) => ({
-      ...block,
-      ...normalizePoint(block, bounds),
-      type: normalizeBlockType(block?.type)
-    })),
+    blocks: normalizeArray(blockSource).map((block) => normalizeMapBlock(block, bounds)),
     encounters: normalizeArray(map.encounters).map((encounter) => ({
       ...encounter,
       ...normalizePoint(encounter, bounds)
@@ -2377,6 +2549,33 @@ function normalizePoint(value, bounds) {
 
 function normalizeArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function normalizeMapBlock(block, bounds) {
+  const point = normalizePoint(block, bounds);
+  if (isSign(block)) {
+    return {
+      ...block,
+      ...point,
+      type: DEFAULT_SIGN.type,
+      message: String(block?.message || '')
+    };
+  }
+  return {
+    ...block,
+    ...point,
+    type: normalizeBlockType(block?.type)
+  };
+}
+
+function isSign(value) {
+  return String(value?.type || '').trim().toLowerCase() === DEFAULT_SIGN.type;
+}
+
+function isWorldObjectAt(tile) {
+  return findEventIndexAt(tile) >= 0
+    || findEncounterIndexAt(tile) >= 0
+    || positionsEqual(state.map.spawn, tile);
 }
 
 function normalizeBlockType(value) {
@@ -2546,9 +2745,12 @@ function formatNumber(value) {
 }
 
 function getMapCounts(map) {
+  const blocks = normalizeArray(map?.blocks);
+  const signs = blocks.filter(isSign).length;
   return {
     roads: normalizeArray(map?.roads).length,
-    blocks: normalizeArray(map?.blocks).length,
+    blocks: blocks.length - signs,
+    signs,
     events: normalizeArray(map?.events).length,
     encounters: normalizeArray(map?.encounters).length
   };
