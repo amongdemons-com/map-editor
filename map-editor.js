@@ -31,11 +31,12 @@ const TOOL_KEYS = ['move', 'road', 'block', 'shrine', 'portal', 'erase'];
 const ENCOUNTER_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
 const ENCOUNTER_ROLES = ['melee', 'ranged', 'poisoner', 'aoe', 'juggernaut', 'counter_tank', 'striker', 'healer', 'assassin'];
 const ENCOUNTER_POSITIONS = ['front', 'back'];
+const BLOCK_TYPES = ['rocks', 'poison', 'lava'];
+const DEFAULT_BLOCK_TYPE = BLOCK_TYPES[0];
 const BLOCK_COLORS = {
-  basalt: '#4d4541',
-  'bone-spur': '#6c6253',
-  chasm: '#16131a',
-  ruin: '#514131'
+  rocks: '#4d4541',
+  poison: '#27552f',
+  lava: '#8f3024'
 };
 const COLORS = {
   background: '#050705',
@@ -623,7 +624,7 @@ function paintRoad(tile) {
 }
 
 function paintBlock(tile) {
-  const type = dom.blockTypeSelect?.value || 'basalt';
+  const type = normalizeBlockType(dom.blockTypeSelect?.value);
   const removedRoad = removeRoadAt(tile);
   const removedEvent = removeEventAt(tile);
 
@@ -787,7 +788,7 @@ function applySelectionChanges(tile) {
     removeRoadAt(tile);
     item.x = tile.x;
     item.y = tile.y;
-    item.type = dom.selectionBlockType.value || item.type || 'basalt';
+    item.type = normalizeBlockType(dom.selectionBlockType.value);
     return true;
   }
 
@@ -967,8 +968,7 @@ function renderInspector() {
   }
 
   if (selection.kind === 'block') {
-    ensureSelectValue(dom.selectionBlockType, item.type || 'basalt');
-    dom.selectionBlockType.value = item.type || 'basalt';
+    dom.selectionBlockType.value = normalizeBlockType(item.type);
   }
 
   if (selection.kind === 'encounter') {
@@ -1285,7 +1285,7 @@ function getSelectionLabel(selection, item) {
     return item.type === 'darkness-portal' ? 'Teleport' : 'Shrine';
   }
   if (selection.kind === 'encounter') return 'Demon Spot';
-  if (selection.kind === 'block') return `Block: ${item.type || 'basalt'}`;
+  if (selection.kind === 'block') return `Block: ${normalizeBlockType(item.type)}`;
   if (selection.kind === 'road') return 'Road';
   if (selection.kind === 'spawn') return 'Spawn';
   return 'Selection';
@@ -1529,7 +1529,7 @@ function drawRoads(ctx) {
 
 function drawBlocks(ctx) {
   state.map.blocks.forEach((tile) => {
-    ctx.fillStyle = BLOCK_COLORS[tile.type] || BLOCK_COLORS.basalt;
+    ctx.fillStyle = BLOCK_COLORS[normalizeBlockType(tile.type)];
     drawTileInset(ctx, tile, Math.max(1, state.tileSize * 0.08));
   });
 }
@@ -1810,10 +1810,9 @@ function drawGameBlocks(ctx) {
 }
 
 function drawGameBlock(ctx, tile) {
-  const zone = zoneTypeIdForTile(tile.x, tile.y);
-  const type = tile.type || 'basalt';
+  const type = normalizeBlockType(tile.type);
 
-  if (zone === 3) {
+  if (type === 'poison') {
     drawGamePuddleBlock(ctx, tile, {
       border: '#06110a',
       body: '#17331d',
@@ -1823,7 +1822,7 @@ function drawGameBlock(ctx, tile) {
     return;
   }
 
-  if (zone === 4) {
+  if (type === 'lava') {
     drawGamePuddleBlock(ctx, tile, {
       border: '#150705',
       body: '#3a1710',
@@ -1833,15 +1832,7 @@ function drawGameBlock(ctx, tile) {
     return;
   }
 
-  if (zone === 8) {
-    drawGameLeafBlock(ctx, tile);
-    return;
-  }
-
-  if (type === 'chasm') drawGameChasmBlock(ctx, tile);
-  else if (type === 'bone-spur') drawGameBoneBlock(ctx, tile);
-  else if (type === 'ruin') drawGameRuinBlock(ctx, tile);
-  else drawGameStoneBlock(ctx, tile);
+  drawGameStoneBlock(ctx, tile);
 }
 
 function drawGameStoneBlock(ctx, tile) {
@@ -1858,56 +1849,6 @@ function drawGameStoneBlock(ctx, tile) {
     drawEllipse(ctx, cx, cy, radius, radius * 0.78, palette.stone[index % palette.stone.length], 0.95);
     drawEllipse(ctx, cx - radius * 0.2, cy - radius * 0.2, radius * 0.36, radius * 0.18, palette.stoneLight, 0.26);
   }
-}
-
-function drawGameBoneBlock(ctx, tile) {
-  const rect = tileRect(tile);
-  const size = state.tileSize;
-  drawEllipse(ctx, rect.x + size * 0.52, rect.y + size * 0.68, size * 0.34, size * 0.13, '#000000', 0.35);
-  ctx.save();
-  ctx.strokeStyle = '#c8c0a8';
-  ctx.lineWidth = Math.max(1, size * 0.1);
-  ctx.lineCap = 'round';
-  for (let index = 0; index < 3; index += 1) {
-    const baseX = rect.x + size * (0.3 + index * 0.2);
-    const baseY = rect.y + size * 0.7;
-    const tipX = baseX + (hashTile(tile.x, tile.y, 51 + index) - 0.5) * size * 0.16;
-    const tipY = rect.y + size * (0.2 + hashTile(tile.x, tile.y, 54 + index) * 0.2);
-    ctx.beginPath();
-    ctx.moveTo(baseX, baseY);
-    ctx.lineTo(tipX, tipY);
-    ctx.stroke();
-    drawCircle(ctx, tipX, tipY, Math.max(1.2, size * 0.055), '#efe8cf', 0.85);
-  }
-  ctx.restore();
-}
-
-function drawGameChasmBlock(ctx, tile) {
-  const rect = tileRect(tile);
-  const size = state.tileSize;
-  const center = tileCenterScreen(tile);
-  drawEllipse(ctx, center.x, center.y + size * 0.08, size * 0.38, size * 0.3, '#020303', 0.92);
-  drawEllipse(ctx, center.x - size * 0.05, center.y - size * 0.02, size * 0.28, size * 0.2, '#0d1015', 0.92);
-  drawEllipse(ctx, rect.x + size * 0.32, rect.y + size * 0.3, size * 0.08, size * 0.03, '#39423a', 0.2);
-}
-
-function drawGameRuinBlock(ctx, tile) {
-  const rect = tileRect(tile);
-  const size = state.tileSize;
-  const palette = zonePaletteForTile(tile.x, tile.y);
-  drawEllipse(ctx, rect.x + size * 0.52, rect.y + size * 0.7, size * 0.34, size * 0.13, '#000000', 0.32);
-  ctx.save();
-  ctx.fillStyle = palette.stoneDark;
-  const brickHeight = Math.max(1.5, size * 0.16);
-  for (let index = 0; index < 3; index += 1) {
-    const x = rect.x + size * (0.2 + index * 0.2);
-    const y = rect.y + size * (0.35 + (index % 2) * 0.16);
-    ctx.fillRect(x, y, size * 0.25, brickHeight);
-    ctx.strokeStyle = '#070909';
-    ctx.lineWidth = Math.max(0.5, size * 0.025);
-    ctx.strokeRect(x, y, size * 0.25, brickHeight);
-  }
-  ctx.restore();
 }
 
 function drawGamePuddleBlock(ctx, tile, colors) {
@@ -1935,21 +1876,6 @@ function drawGamePuddleBlock(ctx, tile, colors) {
   }
 
   ctx.restore();
-}
-
-function drawGameLeafBlock(ctx, tile) {
-  const center = tileCenterScreen(tile);
-  const size = state.tileSize;
-
-  drawEllipse(ctx, center.x + size * 0.06, center.y + size * 0.08, size * 0.38, size * 0.28, '#000000', 0.28);
-  for (let index = 0; index < 9; index += 1) {
-    const angle = (index / 9) * Math.PI * 2 + hashTile(tile.x, tile.y, 60 + index) * 0.55;
-    const length = size * (0.32 + hashTile(tile.x, tile.y, 70 + index) * 0.22);
-    const width = size * (0.08 + hashTile(tile.x, tile.y, 80 + index) * 0.04);
-    const ox = center.x + Math.cos(angle) * size * 0.08;
-    const oy = center.y + Math.sin(angle) * size * 0.08;
-    drawLeaf(ctx, ox, oy, angle, length, width, index % 3 === 0 ? '#35501f' : index % 2 === 0 ? '#1f3214' : '#14200d', 0.86);
-  }
 }
 
 function drawGameEventAuras(ctx) {
@@ -2317,27 +2243,6 @@ function traceScreenBlob(ctx, cx, cy, radius, seedX, seedY) {
   ctx.closePath();
 }
 
-function drawLeaf(ctx, ox, oy, angle, length, width, color, alpha) {
-  const ca = Math.cos(angle);
-  const sa = Math.sin(angle);
-  const tipX = ox + ca * length;
-  const tipY = oy + sa * length;
-  const midX = ox + ca * length * 0.5;
-  const midY = oy + sa * length * 0.5;
-  const px = -sa * width;
-  const py = ca * width;
-
-  ctx.save();
-  ctx.globalAlpha *= alpha;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(ox, oy);
-  ctx.quadraticCurveTo(midX + px, midY + py, tipX, tipY);
-  ctx.quadraticCurveTo(midX - px, midY - py, ox, oy);
-  ctx.fill();
-  ctx.restore();
-}
-
 function getCanvasPoint(event) {
   const rect = dom.mapCanvas.getBoundingClientRect();
   return {
@@ -2433,7 +2338,7 @@ function normalizeLoadedMap(map) {
     blocks: normalizeArray(blockSource).map((block) => ({
       ...block,
       ...normalizePoint(block, bounds),
-      type: String(block?.type || 'basalt')
+      type: normalizeBlockType(block?.type)
     })),
     encounters: normalizeArray(map.encounters).map((encounter) => ({
       ...encounter,
@@ -2472,6 +2377,11 @@ function normalizePoint(value, bounds) {
 
 function normalizeArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function normalizeBlockType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  return BLOCK_TYPES.includes(type) ? type : DEFAULT_BLOCK_TYPE;
 }
 
 function getBounds() {
