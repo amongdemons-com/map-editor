@@ -35,12 +35,13 @@ const TOOL_KEYS = ['move', 'road', 'block', 'shrine', 'portal', 'sign', 'erase']
 const ENCOUNTER_RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
 const ENCOUNTER_ROLES = ['melee', 'ranged', 'poisoner', 'aoe', 'juggernaut', 'counter_tank', 'striker', 'healer', 'assassin'];
 const ENCOUNTER_POSITIONS = ['front', 'back'];
-const BLOCK_TYPES = ['rocks', 'poison', 'lava'];
+const BLOCK_TYPES = ['rocks', 'poison', 'lava', 'leaves'];
 const DEFAULT_BLOCK_TYPE = BLOCK_TYPES[0];
 const BLOCK_COLORS = {
   rocks: '#4d4541',
   poison: '#27552f',
-  lava: '#8f3024'
+  lava: '#8f3024',
+  leaves: '#53672e'
 };
 const COLORS = {
   background: '#050705',
@@ -659,10 +660,6 @@ function paintSign(tile) {
     render();
     return false;
   }
-  if (findRoadIndexAt(tile) < 0) {
-    setStatus('Signs must be placed on road tiles.', 'error');
-    return false;
-  }
   if (isWorldObjectAt(tile)) {
     setStatus('Move the event, demon spot, or spawn before placing a sign on that tile.', 'error');
     return false;
@@ -749,10 +746,6 @@ function moveSelectedTo(tile) {
     state.map.spawn = { ...tile };
     changed = true;
   } else if (selection.kind === 'road') {
-    if (findSignIndexAt(item) >= 0) {
-      setStatus('Move or delete the sign before moving its road tile.', 'warning');
-      return false;
-    }
     if (findRoadIndexAt(tile, selection.index) >= 0) return false;
     removeTerrainBlockAt(tile);
     item.x = tile.x;
@@ -760,10 +753,6 @@ function moveSelectedTo(tile) {
     changed = true;
   } else if (selection.kind === 'sign') {
     if (findBlockIndexAt(tile, selection.index) >= 0) return false;
-    if (findRoadIndexAt(tile) < 0) {
-      setStatus('Signs must stay on road tiles.', 'error');
-      return false;
-    }
     if (isWorldObjectAt(tile)) return false;
     item.x = tile.x;
     item.y = tile.y;
@@ -849,10 +838,6 @@ function applySelectionChanges(tile) {
       setStatus('Another block or sign is already on that tile.', 'error');
       return false;
     }
-    if (findRoadIndexAt(tile) < 0) {
-      setStatus('Signs must stay on road tiles.', 'error');
-      return false;
-    }
     if (isWorldObjectAt(tile)) {
       setStatus('Move the event, demon spot, or spawn before placing a sign on that tile.', 'error');
       return false;
@@ -872,10 +857,6 @@ function applySelectionChanges(tile) {
   }
 
   if (selection.kind === 'road') {
-    if (findSignIndexAt(item) >= 0) {
-      setStatus('Move or delete the sign before moving its road tile.', 'warning');
-      return false;
-    }
     if (findRoadIndexAt(tile, selection.index) >= 0) {
       setStatus('Another road tile is already there.', 'error');
       return false;
@@ -921,11 +902,6 @@ function deleteSelection() {
     setStatus('Demon spots and spawn can be moved, not deleted from this editor.', 'warning');
     return;
   }
-  if (state.selected.kind === 'road' && findSignIndexAt(getSelectedItem()) >= 0) {
-    setStatus('Move or delete the sign before deleting its road tile.', 'warning');
-    return;
-  }
-
   performChange(() => {
     const selection = state.selected;
     if (selection.kind === 'event') state.map.events.splice(selection.index, 1);
@@ -1989,7 +1965,45 @@ function drawGameBlock(ctx, tile) {
     return;
   }
 
+  if (type === 'leaves') {
+    drawGameLeavesBlock(ctx, tile);
+    return;
+  }
+
   drawGameStoneBlock(ctx, tile);
+}
+
+function drawGameLeavesBlock(ctx, tile) {
+  const center = tileCenterScreen(tile);
+  const size = state.tileSize;
+  const colors = ['#263516', '#405524', '#607536', '#7c8438', '#a47b31'];
+
+  drawEllipse(ctx, center.x, center.y + size * 0.12, size * 0.4, size * 0.25, '#050704', 0.38);
+
+  for (let index = 0; index < 9; index += 1) {
+    const angle = hashTile(tile.x, tile.y, 51 + index) * Math.PI * 2;
+    const distance = hashTile(tile.x, tile.y, 61 + index) * size * 0.25;
+    const leafX = center.x + Math.cos(angle) * distance;
+    const leafY = center.y + Math.sin(angle) * distance * 0.62;
+    const leafLength = size * (0.15 + hashTile(tile.x, tile.y, 71 + index) * 0.08);
+    const leafWidth = leafLength * (0.38 + hashTile(tile.x, tile.y, 81 + index) * 0.12);
+    const colorIndex = Math.floor(hashTile(tile.x, tile.y, 91 + index) * colors.length) % colors.length;
+
+    ctx.save();
+    ctx.translate(leafX, leafY);
+    ctx.rotate(angle);
+    drawEllipse(ctx, 0, 0, leafLength, leafWidth, colors[colorIndex], 0.96);
+    if (size >= 10) {
+      ctx.strokeStyle = '#17200d';
+      ctx.lineWidth = Math.max(0.6, size * 0.035);
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(-leafLength * 0.68, 0);
+      ctx.lineTo(leafLength * 0.68, 0);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 }
 
 function drawGameStoneBlock(ctx, tile) {

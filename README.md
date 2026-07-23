@@ -6,7 +6,7 @@ Standalone local editor for `public/api/data/map.json`.
 
 1. Open `tools/map-editor/index.html` locally.
 2. Click `Import` and choose `public/api/data/map.json`.
-3. Edit roads, blocked terrain (rocks, poison, or lava), signs and their messages, shrines, teleports, spawn, or demon spots. Signs must stay on road tiles. Select a demon spot to edit its threat, key demon, and team members.
+3. Edit roads, blocked terrain (rocks, poison, lava, or leaves), signs and their messages, shrines, teleports, spawn, or demon spots. Signs can be placed on or off road tiles. Select a demon spot to edit its threat, key demon, and team members.
 4. Use `Display` to switch between the game-style preview and the editor schematic.
 5. Click `Save Draft` to store a temporary draft in this browser.
 6. Click `Export` to download the current map as `map.json`.
